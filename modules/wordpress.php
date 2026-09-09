@@ -1,5 +1,7 @@
 <?php
 
+use Redirection\Database\Status;
+
 /**
  * WordPress redirect module.
  *
@@ -113,25 +115,25 @@ class WordPress_Module extends Red_Module {
 	/**
 	 * Called after no redirect is matched. This allows us to cache a negative result/
 	 *
-	 * @param string           $url URL.
+	 * @param string $url URL.
 	 * @param WordPress_Module $wp This.
-	 * @param array            $redirects Array of redirects.
+	 * @param Red_Item[] $redirects Array of redirects.
 	 * @return void
 	 */
 	public function cache_unmatched_redirects( $url, $wp, $redirects ) {
-		if ( $this->matched ) {
+		if ( $this->matched !== false ) {
 			return;
 		}
 
-		$this->cache_redirects( $url, $this->matched, $redirects );
+		$this->cache_redirects( $url, false, $redirects );
 	}
 
 	/**
 	 * Called when a redirect is matched. This allows us to cache a positive result.
 	 *
-	 * @param string         $url URL.
+	 * @param string $url URL.
 	 * @param Red_Item|false $matched_redirect Matched redirect.
-	 * @param array          $redirects Array of redirects.
+	 * @param Red_Item[] $redirects Array of redirects.
 	 * @return void
 	 */
 	public function cache_redirects( $url, $matched_redirect, $redirects ) {
@@ -147,10 +149,10 @@ class WordPress_Module extends Red_Module {
 	 * @return boolean
 	 */
 	public function pre_handle_404( $result, WP_Query $query ) {
-		$options = red_get_options();
+		$options = Red_Options::get();
 
 		if ( count( $options['permalinks'] ) > 0 ) {
-			include_once dirname( dirname( __FILE__ ) ) . '/models/permalinks.php';
+			include_once dirname( __DIR__ ) . '/models/permalinks.php';
 
 			$permalinks = new Red_Permalinks( $options['permalinks'] );
 			$permalinks->migrate( $query );
@@ -162,12 +164,12 @@ class WordPress_Module extends Red_Module {
 	/**
 	 * Back-compatability for Redirection databases older than 4.2. Prevents errors from storing data that has no DB column
 	 *
-	 * @param array $insert Data to log.
-	 * @return array
+	 * @param array<string,string> $insert Data to log.
+	 * @return array<string,string>
 	 */
 	public function log_back_compat( $insert ) {
 		// Remove columns not supported in older versions
-		$status = new Red_Database_Status();
+		$status = new Status();
 
 		if ( ! $status->does_support( '4.2' ) ) {
 			foreach ( [ 'request_data', 'request_method', 'http_code', 'domain', 'redirect_by' ] as $ignore ) {
@@ -187,7 +189,7 @@ class WordPress_Module extends Red_Module {
 	 * @return string|false
 	 */
 	public function redirect_canonical( $redirect_url, $requested_url ) {
-		if ( $this->matched ) {
+		if ( $this->matched !== false ) {
 			return false;
 		}
 
@@ -200,15 +202,15 @@ class WordPress_Module extends Red_Module {
 	 * @return void
 	 */
 	public function template_redirect() {
-		if ( ! is_404() || $this->matched ) {
+		if ( ! is_404() || $this->matched !== false ) {
 			return;
 		}
 
 		$this->is_url_and_page_type();
 
-		$options = red_get_options();
+		$options = Red_Options::get();
 
-		if ( isset( $options['expire_404'] ) && $options['expire_404'] >= 0 && $this->can_log() ) {
+		if ( $options['expire_404'] >= 0 && $this->can_log() ) {
 			$details = [
 				'agent' => Redirection_Request::get_user_agent(),
 				'referrer' => Redirection_Request::get_referrer(),
@@ -236,7 +238,7 @@ class WordPress_Module extends Red_Module {
 			array_filter(
 				$this->redirects,
 				function ( Red_Item $redirect ) {
-					return $redirect->match && $redirect->match->get_type() === 'page';
+					return $redirect->match !== null && $redirect->match->get_type() === 'page';
 				}
 			)
 		);
@@ -247,7 +249,7 @@ class WordPress_Module extends Red_Module {
 			foreach ( $page_types as $page_type ) {
 				$action = $page_type->get_match( $request->get_decoded_url(), $request->get_original_url() );
 
-				if ( $action ) {
+				if ( $action !== false ) {
 					$action->run();
 					return true;
 				}
@@ -262,11 +264,10 @@ class WordPress_Module extends Red_Module {
 	/**
 	 * Called by a 'do nothing' action. Return true to stop further processing of the 'do nothing'
 	 *
-	 * @return boolean
+	 * @return void
 	 */
 	public function redirection_do_nothing() {
 		$this->can_log = false;
-		return true;
 	}
 
 	/**
@@ -287,11 +288,11 @@ class WordPress_Module extends Red_Module {
 	 * @return string|false
 	 */
 	public function get_canonical_target() {
-		$options = red_get_options();
+		$options = Red_Options::get();
 		$canonical = new Redirection_Canonical( $options['https'], $options['preferred_domain'], $options['aliases'], get_home_url() );
 
 		// Relocate domain?
-		if ( $options['relocate'] ) {
+		if ( strlen( $options['relocate'] ) > 0 ) {
 			return $canonical->relocate_request( $options['relocate'], Redirection_Request::get_server_name(), Redirection_Request::get_request_url() );
 		}
 
@@ -305,9 +306,16 @@ class WordPress_Module extends Red_Module {
 	 * @return void
 	 */
 	public function canonical_domain() {
+		// In a plain PHP CLI bootstrap (e.g. a cron script that loads wp-load.php)
+		// there is no real HTTP request to redirect. Running die() here would
+		// silently terminate the CLI process before user code can execute.
+		if ( red_is_cli() ) {
+			return;
+		}
+
 		$target = $this->get_canonical_target();
 
-		if ( $target ) {
+		if ( $target !== false ) {
 			// phpcs:ignore
 			wp_redirect( $target, 301, 'redirection' );
 			die();
@@ -320,7 +328,13 @@ class WordPress_Module extends Red_Module {
 	 * @return void
 	 */
 	public function init() {
-		if ( $this->matched ) {
+		if ( $this->matched !== false ) {
+			return;
+		}
+
+		// Skip the redirect loop in a plain PHP CLI bootstrap. A matched rule
+		// would call wp_redirect()+die() and silently terminate the CLI process.
+		if ( red_is_cli() ) {
 			return;
 		}
 
@@ -334,10 +348,10 @@ class WordPress_Module extends Red_Module {
 			$redirects = Red_Item::get_for_url( $request->get_decoded_url() );
 
 			// Redirects will be ordered by position. Run through the list until one fires
-			foreach ( (array) $redirects as $item ) {
+			foreach ( $redirects as $item ) {
 				$action = $item->get_match( $request->get_decoded_url(), $request->get_original_url() );
 
-				if ( $action ) {
+				if ( $action !== false ) {
 					$this->matched = $item;
 
 					do_action( 'redirection_matched', $request->get_decoded_url(), $item, $redirects );
@@ -350,7 +364,7 @@ class WordPress_Module extends Red_Module {
 			// We will only get here if there is no match (check $this->matched) or the action does not result in redirecting away
 			do_action( 'redirection_last', $request->get_decoded_url(), $this, $redirects );
 
-			if ( ! $this->matched ) {
+			if ( $this->matched === false ) {
 				// Keep them for later
 				$this->redirects = $redirects;
 			}
@@ -374,16 +388,15 @@ class WordPress_Module extends Red_Module {
 	/**
 	 * Add any custom HTTP headers to the response.
 	 *
-	 * @param array $obj Some object.
 	 * @return void
 	 */
-	public function send_headers( $obj ) {
-		if ( ! empty( $this->matched ) && $this->matched->action && $this->matched->action->get_code() === 410 ) {
+	public function send_headers() {
+		if ( ! empty( $this->matched ) && $this->matched->action !== null && $this->matched->action->get_code() === 410 ) {
 			add_filter( 'status_header', [ $this, 'set_header_410' ] );
 		}
 
 		// Add any custom headers
-		$options = red_get_options();
+		$options = Red_Options::get();
 		$headers = new Red_Http_Headers( $options['headers'] );
 		$headers->run( $headers->get_site_headers() );
 	}
@@ -452,15 +465,18 @@ class WordPress_Module extends Red_Module {
 		// phpcs:ignore
 		$source = wp_debug_backtrace_summary( null, 5, false );
 
-		return array_filter( $source, function( $item ) use ( $ignore ) {
-			foreach ( $ignore as $ignore_item ) {
-				if ( strpos( $item, $ignore_item ) !== false ) {
-					return false;
+		return array_filter(
+			$source,
+			function ( $item ) use ( $ignore ) {
+				foreach ( $ignore as $ignore_item ) {
+					if ( strpos( $item, $ignore_item ) !== false ) {
+						return false;
+					}
 				}
-			}
 
-			return true;
-		} );
+				return true;
+			}
+		);
 	}
 
 	/**
@@ -471,11 +487,11 @@ class WordPress_Module extends Red_Module {
 	 */
 	public function record_redirect_by( $agent ) {
 		// Have we already redirected with Redirection?
-		if ( $this->matched || $agent === 'redirection' ) {
+		if ( $this->matched !== false || $agent === 'redirection' ) {
 			return $agent;
 		}
 
-		$options = red_get_options();
+		$options = Red_Options::get();
 
 		if ( ! $options['log_external'] ) {
 			return $agent;
@@ -510,8 +526,6 @@ class WordPress_Module extends Red_Module {
 	 * @return string
 	 */
 	public function wp_redirect( $url, $status = 302 ) {
-		global $wp_version;
-
 		$this->redirect_url = $url;
 		$this->redirect_code = $status;
 
@@ -524,12 +538,12 @@ class WordPress_Module extends Red_Module {
 			return $url;
 		}
 
-		$options = red_get_options();
+		$options = Red_Options::get();
 		$headers = new Red_Http_Headers( $options['headers'] );
 		$headers->run( $headers->get_redirect_headers() );
 
 		// Do we need to set the cache header?
-		if ( ! headers_sent() && isset( $options['redirect_cache'] ) && $options['redirect_cache'] !== 0 && intval( $status, 10 ) === 301 ) {
+		if ( ! headers_sent() && $options['redirect_cache'] !== 0 && intval( $status, 10 ) === 301 ) {
 			if ( $options['redirect_cache'] === -1 ) {
 				// No cache - just use WP function
 				nocache_headers();

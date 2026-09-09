@@ -7,18 +7,19 @@ parameters:
         - redirection-cli.php
         - redirection-front.php
         - redirection-settings.php
-        - redirection-version.php
-    scanDirectories:
         - matches
         - modules
-        - modules
-        - fileio
-        - database
+        - includes
         - models
     excludePaths:
         - vendor
 
-    phpVersion: 70100
+    dynamicConstantNames:
+        - WP_CLI
+
+    phpVersion: 70400
+    reportUnmatchedIgnoredErrors: false
+    treatPhpDocTypesAsCertain: false
 
     parallel:
         maximumNumberOfProcesses: 4
@@ -36,3 +37,19 @@ parameters:
         -
             function: 'debug_print_var()'
             message: 'forgot about it? if needed just add a phpstan ignore line'
+
+    universalObjectCratesClasses:
+        - stdClass
+
+    customRulesetUsed: true
+
+    ignoreErrors:
+        -
+            identifier: arrayFilter.strict
+        -
+            identifier: empty.notAllowed
+        -
+            identifier: ternary.condNotBoolean
+        -
+            message: '#PHPDoc tag @api(Define|Error|ErrorExample|Success|Param|Name|Description|Group|Success) has invalid value#'
+            path: api/api.php

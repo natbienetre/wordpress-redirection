@@ -1,4 +1,5 @@
 node_modules
+.pnpm-store
 .config.json
 .vscode
 yarn-error.log
@@ -9,3 +10,15 @@ redirection.js.LICENSE.txt
 release
 dist
 svn
+/.phpunit.result.cache
+/build
+/.stignore
+/.stfolder
+/.claude.md
+/.claude
+/WARP.md
+/AGENTS.md
+/tsconfig.tsbuildinfo
+.agents
+/CLAUDE.md
+/docs

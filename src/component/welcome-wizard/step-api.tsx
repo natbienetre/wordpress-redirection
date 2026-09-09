@@ -1,0 +1,122 @@
+import { useEffect } from 'react';
+import { __ } from '@wordpress/i18n';
+import { ExternalLink, createInterpolateElement } from '@wp-plugin-components';
+import RestApiStatus from 'component/rest-api-status';
+import apiFetch from '@wp-plugin-lib/api-fetch';
+import { useSettingsStore } from 'stores';
+import getFirstApi, { hasWorkingApi } from './first-api';
+
+interface StepApiProps {
+	setStep: ( step: number ) => void;
+	step: number;
+}
+
+export default function StepAPI( { setStep, step }: StepApiProps ) {
+	let api: URL | null = null;
+	let home: URL | null = null;
+	let current: URL | null = null;
+
+	try {
+		api = new URL( window.Redirectioni10n.api.WP_API_root );
+		home = new URL( window.Redirectioni10n.pluginBaseUrl );
+		current = new URL( window.location.href );
+	} catch ( e ) {
+		// Ignore malformed URLs - warning will not be shown
+	}
+
+	const warning = api && home && ( api.protocol !== home.protocol || api.host !== home.host );
+	const originWarning = api && current && api.origin !== current.origin;
+	const apiTest = useSettingsStore( ( state ) => state.apiTest );
+	const canContinue = hasWorkingApi( apiTest );
+
+	useEffect( () => {
+		return () => {
+			const selectedApi = getFirstApi( apiTest );
+
+			if ( selectedApi !== null && window.Redirectioni10n.api.routes[ selectedApi ] ) {
+				apiFetch.replaceRootURLMiddleware( window.Redirectioni10n.api.routes[ selectedApi ] );
+			}
+		};
+	}, [ apiTest ] );
+
+	return (
+		<>
+			<h2>{ __( 'REST API', 'redirection' ) }</h2>
+
+			<p>
+				{ createInterpolateElement(
+					__(
+						'Redirection uses the {{link}}WordPress REST API{{/link}} to communicate with WordPress. This is enabled and working by default. Sometimes the REST API is blocked by:',
+						'redirection'
+					),
+					{
+						link: <ExternalLink url="https://developer.wordpress.org/rest-api/" />,
+					}
+				) }
+			</p>
+
+			<ul>
+				<li>{ __( 'A security plugin (e.g Wordfence)', 'redirection' ) }</li>
+				<li>{ __( 'A server firewall or other server configuration (e.g OVH)', 'redirection' ) }</li>
+				<li>{ __( 'Caching software (e.g Cloudflare)', 'redirection' ) }</li>
+				<li>{ __( 'Some other plugin that blocks the REST API', 'redirection' ) }</li>
+			</ul>
+
+			<p>
+				{ createInterpolateElement(
+					__(
+						'If you do experience a problem then please consult your plugin documentation, or try contacting your host support. This is generally {{link}}not a problem caused by Redirection{{/link}}.',
+						'redirection'
+					),
+					{
+						link: <ExternalLink url="https://redirection.me/support/problems/rest-api/" />,
+					}
+				) }
+			</p>
+
+			{ warning && (
+				<div className="wpl-error">
+					{ __(
+						'You have different URLs configured on your WordPress Settings > General page, which is usually an indication of a misconfiguration, and it can cause problems with the REST API. Please review your settings.',
+						'redirection'
+					) }
+					<p>
+						<code>{ api ? api.protocol + '//' + api.host : 'unknown url' }</code>
+					</p>
+					<p>
+						<code>{ home ? home.protocol + '//' + home.host : 'unknown url' }</code>
+					</p>
+				</div>
+			) }
+
+			{ originWarning && (
+				<div className="wpl-error">
+					{ __(
+						'This admin page is being loaded from a different origin than your REST API. The browser will block the setup request until both URLs use the same protocol, host, and port.',
+						'redirection'
+					) }
+					<p>
+						<code>{ current ? current.origin : 'unknown url' }</code>
+					</p>
+					<p>
+						<code>{ api ? api.origin : 'unknown url' }</code>
+					</p>
+				</div>
+			) }
+
+			<RestApiStatus allowChange={ false } />
+
+			<p>{ __( 'You will need at least one working REST API to continue.', 'redirection' ) }</p>
+
+			<div className="wizard-buttons">
+				<button
+					className="button-primary button"
+					onClick={ () => setStep( step + 1 ) }
+					disabled={ ! canContinue }
+				>
+					{ __( 'Finish Setup', 'redirection' ) }
+				</button>
+			</div>
+		</>
+	);
+}

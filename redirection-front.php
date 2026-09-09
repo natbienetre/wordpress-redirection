@@ -2,7 +2,8 @@
 
 require_once __DIR__ . '/modules/wordpress.php';
 require_once __DIR__ . '/models/canonical.php';
-require_once __DIR__ . '/database/database-status.php';
+
+use Redirection\Database\Status;
 
 /**
  * This powers all of the front-end redirecting
@@ -18,9 +19,9 @@ class Redirection {
 	/**
 	 * WordPress module
 	 *
-	 * @var WordPress_Module|null
+	 * @var WordPress_Module|false
 	 */
-	private $module = null;
+	private $module = false;
 
 	/**
 	 * Singleton
@@ -43,15 +44,17 @@ class Redirection {
 			return;
 		}
 
-		$this->module = Red_Module::get( WordPress_Module::MODULE_ID );
-		if ( $this->module ) {
+		/** @var WordPress_Module|false */
+		$module = Red_Module::get( WordPress_Module::MODULE_ID );
+		$this->module = $module;
+		if ( $this->module !== false ) {
 			$this->module->start();
 		}
 
 		add_action( Red_Flusher::DELETE_HOOK, array( $this, 'clean_redirection_logs' ) );
 		add_filter( 'redirection_url_target', [ $this, 'transform_url' ] );
 
-		$options = red_get_options();
+		$options = Red_Options::get();
 		if ( $options['ip_logging'] === 0 ) {
 			add_filter( 'redirection_request_ip', array( $this, 'no_ip_logging' ) );
 		} elseif ( $options['ip_logging'] === 2 ) {
@@ -59,6 +62,10 @@ class Redirection {
 		}
 	}
 
+	/**
+	 * @param string $url
+	 * @return string
+	 */
 	public function transform_url( $url ) {
 		$transformer = new Red_Url_Transform();
 
@@ -71,7 +78,7 @@ class Redirection {
 	 * @return boolean
 	 */
 	public function can_start() {
-		$status = new Red_Database_Status();
+		$status = new Status();
 		if ( $status->needs_installing() ) {
 			return false;
 		}
@@ -99,11 +106,20 @@ class Redirection {
 		$ip = trim( $ip );
 
 		if ( strpos( $ip, ':' ) !== false ) {
-			// phpcs:ignore
-			$ip = @inet_pton( trim( $ip ) );
+			$packed = inet_pton( trim( $ip ) );
+			if ( $packed === false ) {
+				return '';
+			}
 
-			// phpcs:ignore
-			return @inet_ntop( $ip & pack( 'a16', 'ffff:ffff:ffff:ffff::ff00::0000::0000::0000' ) );
+			// Mask lower 64 bits of the IPv6 address (keep the upper 64 bits).
+			$mask = str_repeat( "\xff", 8 ) . str_repeat( "\x00", 8 );
+			$masked = $packed & $mask;
+			$converted = inet_ntop( $masked );
+			if ( $converted === false ) {
+				return '';
+			}
+
+			return $converted;
 		}
 
 		$parts = [];
@@ -131,11 +147,12 @@ class Redirection {
 	/**
 	 * Used for unit tests
 	 *
-	 * @return WordPress_Module|null
+	 * @return WordPress_Module|false
 	 */
 	public function get_module() {
 		return $this->module;
 	}
 }
 
+// @phpstan-ignore return.void
 add_action( 'plugins_loaded', array( 'Redirection', 'init' ) );

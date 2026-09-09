@@ -1,0 +1,77 @@
+<?php
+
+class SettingsTest extends WP_UnitTestCase {
+	public function testGetDefaultOptions() {
+		delete_option( Red_Options::OPTION_KEY );
+
+		Red_Options::reset();
+		$defaults = Red_Options::get_default_options();
+		$options = red_get_options();
+
+		unset( $defaults['token'] );
+		unset( $options['token'] );
+		unset( $options['flag_case'] );
+		unset( $defaults['flag_case'] );
+		unset( $options['flag_trailing'] );
+		unset( $defaults['flag_trailing'] );
+
+		foreach ( $defaults as $name => $value ) {
+			$this->assertTrue( isset( $options[ $name ] ) );
+			$this->assertEquals( $value, $options[ $name ], $name . ' is not equal ' . print_r( $options[$name], true ) );
+		}
+	}
+
+	public function testGetDefaultOptionsAlreadyInstalled() {
+		update_option( Red_Options::OPTION_KEY, [ 'token' => 'token' ] );
+		Red_Options::reset();
+
+		$options = red_get_options();
+		$this->assertFalse( $options['flag_case'] );
+		$this->assertFalse( $options['flag_trailing'] );
+		$this->assertFalse( $options['flag_regex'] );
+		$this->assertEquals( 'exact', $options['flag_query'] );
+	}
+
+	public function testOptionOverride() {
+		update_option( Red_Options::OPTION_KEY, array( 'token' => 'token' ) );
+		Red_Options::reset();
+
+		$defaults = Red_Options::get_default_options();
+		$options = red_get_options();
+
+		foreach ( $defaults as $name => $value ) {
+			if ( $name !== 'token' ) {
+				$this->assertTrue( isset( $options[ $name ] ) );
+				$this->assertEquals( $value, $options[ $name ] );
+			}
+		}
+
+		$this->assertEquals( 'token', $options['token'] );
+	}
+
+	public function testRemoveOld() {
+		update_option( Red_Options::OPTION_KEY, array( 'cat' => 'cat' ) );
+		Red_Options::reset();
+
+		$options = red_get_options();
+		$this->assertFalse( isset( $options['cat'] ) );
+	}
+
+	public function testImportExportOptionsAreFilteredToPortableSettings() {
+		Red_Options::save(
+			[
+				'https' => true,
+				'flag_case' => true,
+				'update_notice' => 55,
+				'rest_api' => Red_Options::API_JSON_RELATIVE,
+			]
+		);
+
+		$options = Red_Options::get_import_export_options();
+
+		$this->assertTrue( $options['https'] );
+		$this->assertTrue( $options['flag_case'] );
+		$this->assertArrayNotHasKey( 'update_notice', $options );
+		$this->assertArrayNotHasKey( 'rest_api', $options );
+	}
+}
