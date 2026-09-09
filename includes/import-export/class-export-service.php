@@ -213,10 +213,7 @@ class ExportService {
 			$items = $this->redirects->get_all();
 
 			if ( is_array( $groups ) && is_array( $items ) ) {
-				return [
-					'groups' => $groups,
-					'items' => $items,
-				];
+				return $this->apply_export_filters( 'all', $groups, $items );
 			}
 
 			return false;
@@ -228,10 +225,7 @@ class ExportService {
 				return false;
 			}
 
-			return [
-				'groups' => [ $group ],
-				'items' => $this->redirects->get_all_for_group( intval( $scope_value, 10 ) ),
-			];
+			return $this->apply_export_filters( 'group', [ $group ], $this->redirects->get_all_for_group( intval( $scope_value, 10 ) ) );
 		}
 
 		$module = $this->get_module( $scope_value );
@@ -246,10 +240,50 @@ class ExportService {
 			return false;
 		}
 
+		return $this->apply_export_filters( $module->get_name(), $groups, $items );
+	}
+
+	/**
+	 * Allow plugins to enrich or filter the groups/items lists before export.
+	 *
+	 * @param string $module_name Module name, or 'all'/'group' for non-module scopes.
+	 * @param array<GroupExport> $groups
+	 * @param array<\Red_Item> $items
+	 * @return array{groups: array<GroupExport>, items: array<\Red_Item>}
+	 */
+	private function apply_export_filters( $module_name, array $groups, array $items ) {
+		$groups = $this->filter_groups_to_export( $module_name, $groups );
+		$items = $this->filter_items_to_export( $module_name, $items, $groups );
+
 		return [
 			'groups' => $groups,
 			'items' => $items,
 		];
+	}
+
+	/**
+	 * @param string $module_name
+	 * @param array<GroupExport> $groups
+	 * @return array<GroupExport>
+	 */
+	private function filter_groups_to_export( $module_name, array $groups ) {
+		$groups = apply_filters( 'redirection_export_groups', $groups );
+		$groups = apply_filters( 'redirection_export_groups_' . $module_name, $groups );
+
+		return $groups;
+	}
+
+	/**
+	 * @param string $module_name
+	 * @param array<\Red_Item> $items
+	 * @param array<GroupExport> $groups
+	 * @return array<\Red_Item>
+	 */
+	private function filter_items_to_export( $module_name, array $items, array $groups ) {
+		$items = apply_filters( 'redirection_export_items', $items, $groups );
+		$items = apply_filters( 'redirection_export_items_' . $module_name, $items, $groups );
+
+		return $items;
 	}
 
 	/**
